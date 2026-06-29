@@ -1,0 +1,80 @@
+name: Deploy Backend Service
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            DEPLOY_DIR="/opt/project-k-backend"
+            REPO_URL="https://github.com/shreyashnadage/project-k-backend-service.git"
+
+            # First deploy: clone. Subsequent: pull.
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              sudo mkdir -p "$DEPLOY_DIR"
+              sudo chown ubuntu:ubuntu "$DEPLOY_DIR"
+              git clone "$REPO_URL" "$DEPLOY_DIR"
+            else
+              cd "$DEPLOY_DIR"
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
+            cd "$DEPLOY_DIR"
+
+            # Create/update venv and install deps
+            if [ ! -d "venv" ]; then
+              python3.12 -m venv venv
+            fi
+            venv/bin/pip install --quiet --upgrade pip
+            venv/bin/pip install --quiet -r requirements.txt
+
+            # Copy env file from old deployment if it exists and we don't have one
+            if [ ! -f "$DEPLOY_DIR/.env" ] && [ -f "/opt/tally-sync/.env" ]; then
+              cp /opt/tally-sync/.env "$DEPLOY_DIR/.env"
+            fi
+
+            # Update systemd service to point at new path
+            sudo tee /etc/systemd/system/project-k-backend.service > /dev/null <<'UNIT'
+            [Unit]
+            Description=Project K Backend Service (FastAPI)
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=ubuntu
+            WorkingDirectory=/opt/project-k-backend
+            EnvironmentFile=/opt/project-k-backend/.env
+            ExecStart=/opt/project-k-backend/venv/bin/uvicorn cloudplatform.main:app --host 0.0.0.0 --port 8000
+            Restart=always
+            RestartSec=10
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+
+            sudo systemctl daemon-reload
+            sudo systemctl enable project-k-backend.service
+
+            # Stop old service if running, start new one
+            sudo systemctl stop tally-sync.service 2>/dev/null || true
+            sudo systemctl restart project-k-backend.service
+
+            # Wait and verify
+            sleep 3
+            curl -sf http://localhost:8000/ || { echo "Health check failed!"; sudo journalctl -u project-k-backend.service --no-pager -n 20; exit 1; }
+            echo "Deploy successful!"
