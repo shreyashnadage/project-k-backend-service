@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import json
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, Numeric
 
 from cloudplatform.db.models import (
     Tenant, Ledger, Voucher, AgentHeartbeat, SyncAuditLog,
@@ -267,7 +267,7 @@ def get_cash_flow(
         func.sum(
             func.cast(
                 func.replace(Voucher.amount, ",", ""),
-                db.types.Numeric
+                Numeric
             )
         ).label("total_amount")
     ).filter(
