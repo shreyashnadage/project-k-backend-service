@@ -360,3 +360,30 @@ class SyncCommand(Base):
 
     def __repr__(self):
         return f"<SyncCommand {self.command_type} {self.status}>"
+
+
+class SyncWatermark(Base):
+    """
+    Tracks the last successful sync position per (tenant, device, company, resource).
+
+    For vouchers: watermark_value is an ISO date (YYYY-MM-DD) — only fetch newer.
+    For master data: watermark_value is a max ALTER ID or timestamp.
+    """
+    __tablename__ = "sync_watermarks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=False, index=True)
+    device_id = Column(String(36), nullable=False)
+    company_guid = Column(String(255), nullable=False)
+    resource_type = Column(String(50), nullable=False)  # ledger, voucher, group, stock_item, stock_group
+    watermark_value = Column(String(255), nullable=False)  # ISO date or ALTER ID
+    records_synced = Column(Integer, default=0)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index(
+            "ix_watermark_lookup",
+            "tenant_id", "device_id", "company_guid", "resource_type",
+            unique=True,
+        ),
+    )

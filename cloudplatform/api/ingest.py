@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+
 
 from cloudplatform.db.models import (
     Tenant, Ledger, Voucher, SyncAuditLog, DeviceRegistration, Client,
@@ -92,6 +92,7 @@ class IngestResponse(BaseModel):
     """Response from ingest endpoint."""
     accepted: int
     duplicates: int
+    updated: int = 0
     errors: int
     message: str
 
@@ -153,40 +154,51 @@ def ingest_ledgers(batch: LedgerBatch, tenant: Tenant = Depends(verify_api_key),
     if tenant.id != batch.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant ID mismatch")
 
-    accepted = duplicates = errors = 0
+    accepted = updated = duplicates = errors = 0
 
     for ledger in batch.ledgers:
         try:
-            row = Ledger(
-                tenant_id=tenant.id,
-                company_guid=ledger.company_guid,
-                ledger_guid=ledger.ledger_guid,
-                name=ledger.name,
-                parent=ledger.parent,
-                ledger_type=ledger.ledger_type,
-                opening_balance=ledger.opening_balance,
-                closing_balance=ledger.closing_balance,
-            )
-            db.add(row)
-            db.flush()
-            accepted += 1
+            existing = db.query(Ledger).filter(
+                Ledger.tenant_id == tenant.id,
+                Ledger.company_guid == ledger.company_guid,
+                Ledger.ledger_guid == ledger.ledger_guid,
+            ).first()
+
+            if existing:
+                changed = False
+                for field in ("name", "parent", "ledger_type", "opening_balance", "closing_balance"):
+                    new_val = getattr(ledger, field)
+                    if new_val is not None and getattr(existing, field) != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+                if changed:
+                    db.flush()
+                    updated += 1
+                    action = "updated"
+                else:
+                    duplicates += 1
+                    action = "duplicate"
+            else:
+                db.add(Ledger(
+                    tenant_id=tenant.id,
+                    company_guid=ledger.company_guid,
+                    ledger_guid=ledger.ledger_guid,
+                    name=ledger.name,
+                    parent=ledger.parent,
+                    ledger_type=ledger.ledger_type,
+                    opening_balance=ledger.opening_balance,
+                    closing_balance=ledger.closing_balance,
+                ))
+                db.flush()
+                accepted += 1
+                action = "inserted"
+
             db.add(SyncAuditLog(
                 tenant_id=tenant.id,
                 company_guid=ledger.company_guid,
                 record_type="ledger",
                 record_guid=ledger.ledger_guid,
-                action="inserted",
-                transmitted_at=datetime.now(timezone.utc),
-            ))
-        except IntegrityError:
-            db.rollback()
-            duplicates += 1
-            db.add(SyncAuditLog(
-                tenant_id=tenant.id,
-                company_guid=ledger.company_guid,
-                record_type="ledger",
-                record_guid=ledger.ledger_guid,
-                action="duplicate",
+                action=action,
                 transmitted_at=datetime.now(timezone.utc),
             ))
         except Exception as e:
@@ -198,9 +210,10 @@ def ingest_ledgers(batch: LedgerBatch, tenant: Tenant = Depends(verify_api_key),
 
     return IngestResponse(
         accepted=accepted,
+        updated=updated,
         duplicates=duplicates,
         errors=errors,
-        message=f"Ledgers: {accepted} new, {duplicates} duplicates, {errors} errors"
+        message=f"Ledgers: {accepted} new, {updated} updated, {duplicates} unchanged, {errors} errors"
     )
 
 
@@ -215,49 +228,62 @@ def ingest_vouchers(batch: VoucherBatch, tenant: Tenant = Depends(verify_api_key
     if tenant.id != batch.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant ID mismatch")
 
-    accepted = duplicates = errors = 0
+    accepted = updated = duplicates = errors = 0
 
     for voucher in batch.vouchers:
         try:
+            existing = db.query(Voucher).filter(
+                Voucher.tenant_id == tenant.id,
+                Voucher.company_guid == voucher.company_guid,
+                Voucher.voucher_guid == voucher.voucher_guid,
+            ).first()
+
             raw_data = {
                 "voucher_type": voucher.voucher_type,
                 "party": voucher.party,
                 "narration": voucher.narration,
                 "amount": voucher.amount,
             }
-            row = Voucher(
-                tenant_id=tenant.id,
-                company_guid=voucher.company_guid,
-                voucher_guid=voucher.voucher_guid,
-                voucher_type=voucher.voucher_type,
-                voucher_number=voucher.voucher_number,
-                date=voucher.date,
-                party=voucher.party,
-                narration=voucher.narration,
-                amount=voucher.amount,
-                raw_data=json.dumps(raw_data, ensure_ascii=False),
-                agent_version=voucher.agent_version,
-            )
-            db.add(row)
-            db.flush()
-            accepted += 1
+
+            if existing:
+                changed = False
+                for field in ("voucher_type", "voucher_number", "date", "party", "narration", "amount"):
+                    new_val = getattr(voucher, field)
+                    if new_val is not None and getattr(existing, field) != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+                if changed:
+                    existing.raw_data = json.dumps(raw_data, ensure_ascii=False)
+                    db.flush()
+                    updated += 1
+                    action = "updated"
+                else:
+                    duplicates += 1
+                    action = "duplicate"
+            else:
+                db.add(Voucher(
+                    tenant_id=tenant.id,
+                    company_guid=voucher.company_guid,
+                    voucher_guid=voucher.voucher_guid,
+                    voucher_type=voucher.voucher_type,
+                    voucher_number=voucher.voucher_number,
+                    date=voucher.date,
+                    party=voucher.party,
+                    narration=voucher.narration,
+                    amount=voucher.amount,
+                    raw_data=json.dumps(raw_data, ensure_ascii=False),
+                    agent_version=voucher.agent_version,
+                ))
+                db.flush()
+                accepted += 1
+                action = "inserted"
+
             db.add(SyncAuditLog(
                 tenant_id=tenant.id,
                 company_guid=voucher.company_guid,
                 record_type="voucher",
                 record_guid=voucher.voucher_guid,
-                action="inserted",
-                transmitted_at=datetime.now(timezone.utc),
-            ))
-        except IntegrityError:
-            db.rollback()
-            duplicates += 1
-            db.add(SyncAuditLog(
-                tenant_id=tenant.id,
-                company_guid=voucher.company_guid,
-                record_type="voucher",
-                record_guid=voucher.voucher_guid,
-                action="duplicate",
+                action=action,
                 transmitted_at=datetime.now(timezone.utc),
             ))
         except Exception as e:
@@ -269,9 +295,10 @@ def ingest_vouchers(batch: VoucherBatch, tenant: Tenant = Depends(verify_api_key
 
     return IngestResponse(
         accepted=accepted,
+        updated=updated,
         duplicates=duplicates,
         errors=errors,
-        message=f"Vouchers: {accepted} new, {duplicates} duplicates, {errors} errors"
+        message=f"Vouchers: {accepted} new, {updated} updated, {duplicates} unchanged, {errors} errors"
     )
 
 
@@ -298,27 +325,42 @@ def ingest_groups(batch: GroupBatch, tenant: Tenant = Depends(verify_api_key), d
     if tenant.id != batch.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant ID mismatch")
 
-    accepted = duplicates = errors = 0
+    accepted = updated = duplicates = errors = 0
     for g in batch.groups:
         try:
-            db.add(AccountGroup(
-                tenant_id=tenant.id, company_guid=g.company_guid,
-                group_guid=g.group_guid, name=g.name,
-                parent=g.parent, is_revenue=g.is_revenue,
-            ))
-            db.flush()
-            accepted += 1
-        except IntegrityError:
-            db.rollback()
-            duplicates += 1
+            existing = db.query(AccountGroup).filter(
+                AccountGroup.tenant_id == tenant.id,
+                AccountGroup.company_guid == g.company_guid,
+                AccountGroup.group_guid == g.group_guid,
+            ).first()
+            if existing:
+                changed = False
+                for field in ("name", "parent", "is_revenue"):
+                    new_val = getattr(g, field)
+                    if new_val is not None and getattr(existing, field) != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+                if changed:
+                    db.flush()
+                    updated += 1
+                else:
+                    duplicates += 1
+            else:
+                db.add(AccountGroup(
+                    tenant_id=tenant.id, company_guid=g.company_guid,
+                    group_guid=g.group_guid, name=g.name,
+                    parent=g.parent, is_revenue=g.is_revenue,
+                ))
+                db.flush()
+                accepted += 1
         except Exception as e:
             db.rollback()
             errors += 1
             logger.error(f"Error ingesting group {g.group_guid}: {e}")
 
     db.commit()
-    return IngestResponse(accepted=accepted, duplicates=duplicates, errors=errors,
-                          message=f"Groups: {accepted} new, {duplicates} duplicates, {errors} errors")
+    return IngestResponse(accepted=accepted, updated=updated, duplicates=duplicates, errors=errors,
+                          message=f"Groups: {accepted} new, {updated} updated, {duplicates} unchanged, {errors} errors")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -348,29 +390,44 @@ def ingest_stock_items(batch: StockItemBatch, tenant: Tenant = Depends(verify_ap
     if tenant.id != batch.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant ID mismatch")
 
-    accepted = duplicates = errors = 0
+    accepted = updated = duplicates = errors = 0
     for s in batch.stock_items:
         try:
-            db.add(StockItem(
-                tenant_id=tenant.id, company_guid=s.company_guid,
-                item_guid=s.item_guid, name=s.name, parent=s.parent,
-                base_units=s.base_units, opening_balance=s.opening_balance,
-                closing_balance=s.closing_balance, hsn_code=s.hsn_code,
-                gst_rate=s.gst_rate,
-            ))
-            db.flush()
-            accepted += 1
-        except IntegrityError:
-            db.rollback()
-            duplicates += 1
+            existing = db.query(StockItem).filter(
+                StockItem.tenant_id == tenant.id,
+                StockItem.company_guid == s.company_guid,
+                StockItem.item_guid == s.item_guid,
+            ).first()
+            if existing:
+                changed = False
+                for field in ("name", "parent", "base_units", "opening_balance", "closing_balance", "hsn_code", "gst_rate"):
+                    new_val = getattr(s, field)
+                    if new_val is not None and getattr(existing, field) != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+                if changed:
+                    db.flush()
+                    updated += 1
+                else:
+                    duplicates += 1
+            else:
+                db.add(StockItem(
+                    tenant_id=tenant.id, company_guid=s.company_guid,
+                    item_guid=s.item_guid, name=s.name, parent=s.parent,
+                    base_units=s.base_units, opening_balance=s.opening_balance,
+                    closing_balance=s.closing_balance, hsn_code=s.hsn_code,
+                    gst_rate=s.gst_rate,
+                ))
+                db.flush()
+                accepted += 1
         except Exception as e:
             db.rollback()
             errors += 1
             logger.error(f"Error ingesting stock item {s.item_guid}: {e}")
 
     db.commit()
-    return IngestResponse(accepted=accepted, duplicates=duplicates, errors=errors,
-                          message=f"Stock items: {accepted} new, {duplicates} duplicates, {errors} errors")
+    return IngestResponse(accepted=accepted, updated=updated, duplicates=duplicates, errors=errors,
+                          message=f"Stock items: {accepted} new, {updated} updated, {duplicates} unchanged, {errors} errors")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -395,26 +452,41 @@ def ingest_stock_groups(batch: StockGroupBatch, tenant: Tenant = Depends(verify_
     if tenant.id != batch.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant ID mismatch")
 
-    accepted = duplicates = errors = 0
+    accepted = updated = duplicates = errors = 0
     for g in batch.stock_groups:
         try:
-            db.add(StockGroup(
-                tenant_id=tenant.id, company_guid=g.company_guid,
-                group_guid=g.group_guid, name=g.name, parent=g.parent,
-            ))
-            db.flush()
-            accepted += 1
-        except IntegrityError:
-            db.rollback()
-            duplicates += 1
+            existing = db.query(StockGroup).filter(
+                StockGroup.tenant_id == tenant.id,
+                StockGroup.company_guid == g.company_guid,
+                StockGroup.group_guid == g.group_guid,
+            ).first()
+            if existing:
+                changed = False
+                for field in ("name", "parent"):
+                    new_val = getattr(g, field)
+                    if new_val is not None and getattr(existing, field) != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+                if changed:
+                    db.flush()
+                    updated += 1
+                else:
+                    duplicates += 1
+            else:
+                db.add(StockGroup(
+                    tenant_id=tenant.id, company_guid=g.company_guid,
+                    group_guid=g.group_guid, name=g.name, parent=g.parent,
+                ))
+                db.flush()
+                accepted += 1
         except Exception as e:
             db.rollback()
             errors += 1
             logger.error(f"Error ingesting stock group {g.group_guid}: {e}")
 
     db.commit()
-    return IngestResponse(accepted=accepted, duplicates=duplicates, errors=errors,
-                          message=f"Stock groups: {accepted} new, {duplicates} duplicates, {errors} errors")
+    return IngestResponse(accepted=accepted, updated=updated, duplicates=duplicates, errors=errors,
+                          message=f"Stock groups: {accepted} new, {updated} updated, {duplicates} unchanged, {errors} errors")
 
 
 @router.get("/health")
