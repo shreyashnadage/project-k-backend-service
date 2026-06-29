@@ -12,6 +12,9 @@ DATABASE_URL = os.getenv(
     "sqlite:///tally_sync_dev.db"
 )
 
+# Tally Data Simulator URL — empty means test mode is disabled
+SIMULATOR_URL = os.getenv("SIMULATOR_URL", "").rstrip("/")
+
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
 _engine_kwargs = {

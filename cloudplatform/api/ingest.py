@@ -21,6 +21,7 @@ from cloudplatform.db.models import (
     AccountGroup, StockItem, StockGroup,
 )
 from cloudplatform.db.database import get_db
+from cloudplatform.db.models import TestModeState
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -188,6 +189,7 @@ def ingest_ledgers(batch: LedgerBatch, tenant: Tenant = Depends(verify_api_key),
                     ledger_type=ledger.ledger_type,
                     opening_balance=ledger.opening_balance,
                     closing_balance=ledger.closing_balance,
+                    data_source="live",
                 ))
                 db.flush()
                 accepted += 1
@@ -199,6 +201,7 @@ def ingest_ledgers(batch: LedgerBatch, tenant: Tenant = Depends(verify_api_key),
                 record_type="ledger",
                 record_guid=ledger.ledger_guid,
                 action=action,
+                data_source="live",
                 transmitted_at=datetime.now(timezone.utc),
             ))
         except Exception as e:
@@ -273,6 +276,7 @@ def ingest_vouchers(batch: VoucherBatch, tenant: Tenant = Depends(verify_api_key
                     amount=voucher.amount,
                     raw_data=json.dumps(raw_data, ensure_ascii=False),
                     agent_version=voucher.agent_version,
+                    data_source="live",
                 ))
                 db.flush()
                 accepted += 1
@@ -284,6 +288,7 @@ def ingest_vouchers(batch: VoucherBatch, tenant: Tenant = Depends(verify_api_key
                 record_type="voucher",
                 record_guid=voucher.voucher_guid,
                 action=action,
+                data_source="live",
                 transmitted_at=datetime.now(timezone.utc),
             ))
         except Exception as e:
@@ -350,6 +355,7 @@ def ingest_groups(batch: GroupBatch, tenant: Tenant = Depends(verify_api_key), d
                     tenant_id=tenant.id, company_guid=g.company_guid,
                     group_guid=g.group_guid, name=g.name,
                     parent=g.parent, is_revenue=g.is_revenue,
+                    data_source="live",
                 ))
                 db.flush()
                 accepted += 1
@@ -416,7 +422,7 @@ def ingest_stock_items(batch: StockItemBatch, tenant: Tenant = Depends(verify_ap
                     item_guid=s.item_guid, name=s.name, parent=s.parent,
                     base_units=s.base_units, opening_balance=s.opening_balance,
                     closing_balance=s.closing_balance, hsn_code=s.hsn_code,
-                    gst_rate=s.gst_rate,
+                    gst_rate=s.gst_rate, data_source="live",
                 ))
                 db.flush()
                 accepted += 1
@@ -476,6 +482,7 @@ def ingest_stock_groups(batch: StockGroupBatch, tenant: Tenant = Depends(verify_
                 db.add(StockGroup(
                     tenant_id=tenant.id, company_guid=g.company_guid,
                     group_guid=g.group_guid, name=g.name, parent=g.parent,
+                    data_source="live",
                 ))
                 db.flush()
                 accepted += 1
@@ -497,14 +504,17 @@ def health_check():
 
 @router.get("/v1/stats")
 def get_stats(tenant: Tenant = Depends(verify_api_key), db: Session = Depends(get_db)):
-    """Get ingest statistics for tenant."""
+    """Get ingest statistics for tenant (live data only)."""
+    from cloudplatform.api.test_mode import get_active_data_source
+    ds = get_active_data_source(tenant.id, db)
     return {
         "tenant_id": tenant.id,
-        "total_ledgers":      db.query(Ledger).filter(Ledger.tenant_id == tenant.id).count(),
-        "total_vouchers":     db.query(Voucher).filter(Voucher.tenant_id == tenant.id).count(),
-        "total_groups":       db.query(AccountGroup).filter(AccountGroup.tenant_id == tenant.id).count(),
-        "total_stock_items":  db.query(StockItem).filter(StockItem.tenant_id == tenant.id).count(),
-        "total_stock_groups": db.query(StockGroup).filter(StockGroup.tenant_id == tenant.id).count(),
+        "data_source": ds,
+        "total_ledgers":      db.query(Ledger).filter(Ledger.tenant_id == tenant.id, Ledger.data_source == ds).count(),
+        "total_vouchers":     db.query(Voucher).filter(Voucher.tenant_id == tenant.id, Voucher.data_source == ds).count(),
+        "total_groups":       db.query(AccountGroup).filter(AccountGroup.tenant_id == tenant.id, AccountGroup.data_source == ds).count(),
+        "total_stock_items":  db.query(StockItem).filter(StockItem.tenant_id == tenant.id, StockItem.data_source == ds).count(),
+        "total_stock_groups": db.query(StockGroup).filter(StockGroup.tenant_id == tenant.id, StockGroup.data_source == ds).count(),
     }
 
 
@@ -515,7 +525,10 @@ def query_data(
     tenant: Tenant = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
-    """Query stored data by resource type."""
+    """Query stored data by resource type (respects active data_source)."""
+    from cloudplatform.api.test_mode import get_active_data_source
+    ds = get_active_data_source(tenant.id, db)
+
     model_map = {
         "ledgers": Ledger,
         "vouchers": Voucher,
@@ -528,7 +541,8 @@ def query_data(
         raise HTTPException(status_code=404, detail=f"Unknown resource: {resource}")
 
     rows = db.query(model).filter(
-        model.tenant_id == tenant.id
+        model.tenant_id == tenant.id,
+        model.data_source == ds,
     ).limit(limit).all()
 
     results = []

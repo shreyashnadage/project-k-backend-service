@@ -48,6 +48,7 @@ class Ledger(Base):
     ledger_type = Column(String(100))
     opening_balance = Column(String(30))
     closing_balance = Column(String(30))
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Unique constraint: same ledger not inserted twice per company
@@ -74,6 +75,7 @@ class Voucher(Base):
     narration = Column(Text)  # Voucher notes
     amount = Column(String(30))  # String to preserve precision
     raw_data = Column(Text)  # Raw JSON for future expansion
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     agent_version = Column(String(20))
 
@@ -116,7 +118,8 @@ class SyncAuditLog(Base):
     company_guid = Column(String(255))
     record_type = Column(String(20))  # 'voucher' or 'ledger'
     record_guid = Column(String(255))  # voucher_guid or ledger_guid
-    action = Column(String(20))  # 'inserted' or 'duplicate'
+    action = Column(String(20))  # 'inserted', 'updated', or 'duplicate'
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     transmitted_at = Column(DateTime(timezone=True))
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -135,6 +138,7 @@ class AccountGroup(Base):
     name = Column(String(500), nullable=False)
     parent = Column(String(500))
     is_revenue = Column(String(10))
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -160,6 +164,7 @@ class StockItem(Base):
     closing_balance = Column(String(30))
     hsn_code = Column(String(50))
     gst_rate = Column(String(20))
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -180,6 +185,7 @@ class StockGroup(Base):
     group_guid = Column(String(255), nullable=False)
     name = Column(String(500), nullable=False)
     parent = Column(String(500))
+    data_source = Column(String(50), nullable=False, default="live", index=True)
     received_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -387,3 +393,15 @@ class SyncWatermark(Base):
             unique=True,
         ),
     )
+
+
+class TestModeState(Base):
+    """Singleton per tenant: tracks whether the dashboard shows live or simulated data."""
+    __tablename__ = "test_mode_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=False, unique=True, index=True)
+    mode = Column(String(10), nullable=False, default="live")  # 'live' | 'test'
+    active_simulation_id = Column(Integer, nullable=True)
+    simulation_name = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

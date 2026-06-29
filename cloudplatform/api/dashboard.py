@@ -21,6 +21,7 @@ from cloudplatform.db.models import (
 )
 from cloudplatform.db.database import get_db
 from cloudplatform.api.ingest import verify_api_key
+from cloudplatform.api.test_mode import get_active_data_source
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -111,7 +112,7 @@ class SyncHistoryResponse(BaseModel):
 # Helper Functions
 # ────────────────────────────────────────────────────────────────────────────
 
-def get_sync_health(db: Session, tenant_id: str) -> Tuple[str, Optional[str]]:
+def get_sync_health(db: Session, tenant_id: str, data_source: str = "live") -> Tuple[str, Optional[str]]:
     """
     Determine sync health status.
 
@@ -120,10 +121,11 @@ def get_sync_health(db: Session, tenant_id: str) -> Tuple[str, Optional[str]]:
     - 'warning': Last sync within 7 days
     - 'error': No sync or older than 7 days
     """
-    # Check most recent audit log
+    # Check most recent audit log for the active data source
     latest_sync = db.query(SyncAuditLog).filter(
         SyncAuditLog.tenant_id == tenant_id,
-        SyncAuditLog.action == "inserted"
+        SyncAuditLog.action == "inserted",
+        SyncAuditLog.data_source == data_source,
     ).order_by(SyncAuditLog.received_at.desc()).first()
 
     if not latest_sync:
@@ -162,17 +164,21 @@ def get_kpis(
     - sync_health: Status (healthy/warning/error)
     - recent_syncs: Number of syncs in last 24 hours
     """
+    ds = get_active_data_source(tenant.id, db)
+
     # Count ledgers and vouchers
     ledger_count = db.query(func.count(Ledger.id)).filter(
-        Ledger.tenant_id == tenant.id
+        Ledger.tenant_id == tenant.id,
+        Ledger.data_source == ds,
     ).scalar() or 0
 
     voucher_count = db.query(func.count(Voucher.id)).filter(
-        Voucher.tenant_id == tenant.id
+        Voucher.tenant_id == tenant.id,
+        Voucher.data_source == ds,
     ).scalar() or 0
 
-    # Get sync health
-    health, last_sync = get_sync_health(db, tenant.id)
+    # Get sync health (uses active data_source so test mode shows sim's health)
+    health, last_sync = get_sync_health(db, tenant.id, ds)
 
     # Count recent syncs (last 24 hours)
     now = datetime.utcnow()
@@ -181,6 +187,7 @@ def get_kpis(
         and_(
             SyncAuditLog.tenant_id == tenant.id,
             SyncAuditLog.action == "inserted",
+            SyncAuditLog.data_source == ds,
             SyncAuditLog.received_at >= day_ago
         )
     ).scalar() or 0
@@ -210,14 +217,18 @@ def get_vouchers(
 
     Returns: Paginated list of vouchers, most recent first.
     """
+    ds = get_active_data_source(tenant.id, db)
+
     # Get total count
     total = db.query(func.count(Voucher.id)).filter(
-        Voucher.tenant_id == tenant.id
+        Voucher.tenant_id == tenant.id,
+        Voucher.data_source == ds,
     ).scalar() or 0
 
     # Get paginated vouchers (most recent first)
     vouchers = db.query(Voucher).filter(
-        Voucher.tenant_id == tenant.id
+        Voucher.tenant_id == tenant.id,
+        Voucher.data_source == ds,
     ).order_by(
         Voucher.date.desc(),
         Voucher.id.desc()
@@ -261,6 +272,8 @@ def get_cash_flow(
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=30 * months)
 
+    ds = get_active_data_source(tenant.id, db)
+
     # Query vouchers in date range, grouped by month
     vouchers = db.query(
         func.substr(Voucher.date, 1, 7).label("period"),  # YYYY-MM
@@ -273,6 +286,7 @@ def get_cash_flow(
     ).filter(
         and_(
             Voucher.tenant_id == tenant.id,
+            Voucher.data_source == ds,
             Voucher.date >= start_date.strftime("%Y-%m-%d"),
             Voucher.date <= now.strftime("%Y-%m-%d")
         )
@@ -335,7 +349,8 @@ def get_ledgers(
     tenant: Tenant = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
-    base = db.query(Ledger).filter(Ledger.tenant_id == tenant.id)
+    ds = get_active_data_source(tenant.id, db)
+    base = db.query(Ledger).filter(Ledger.tenant_id == tenant.id, Ledger.data_source == ds)
 
     if search:
         base = base.filter(
@@ -369,9 +384,10 @@ def get_ledger_groups(
     tenant: Tenant = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
+    ds = get_active_data_source(tenant.id, db)
     parents = (
         db.query(Ledger.parent)
-        .filter(Ledger.tenant_id == tenant.id, Ledger.parent.isnot(None))
+        .filter(Ledger.tenant_id == tenant.id, Ledger.parent.isnot(None), Ledger.data_source == ds)
         .distinct()
         .order_by(Ledger.parent)
         .all()

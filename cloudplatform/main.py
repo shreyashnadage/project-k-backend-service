@@ -20,6 +20,7 @@ from cloudplatform.api.commands import router as commands_router
 from cloudplatform.api.companies import router as companies_router
 from cloudplatform.api.admin import router as admin_router
 from cloudplatform.api.watermarks import router as watermarks_router
+from cloudplatform.api.test_mode import router as test_mode_router
 
 # Setup logging
 logging.basicConfig(
@@ -68,6 +69,7 @@ app.include_router(commands_router)   # Command channel: cloud → agent
 app.include_router(companies_router)  # Company mappings: tenant → Tally companies
 app.include_router(admin_router)      # Admin dashboard for platform operators
 app.include_router(watermarks_router)  # Sync watermarks for incremental sync
+app.include_router(test_mode_router)   # Test mode: simulated data ingestion + toggle
 
 
 # Health check (root)
