@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-k-backend-service"
+version = "0.3.0"
+description = "Cloud backend for Tally data synchronization and working capital analytics"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Shreya Nadage", email = "shreyashnadage@gmail.com"}
+]
+
+[project.urls]
+Repository = "https://github.com/shreyashnadage/project-k-backend-service"
+
+[tool.setuptools]
+packages = ["cloudplatform", "cloudplatform.api", "cloudplatform.auth", "cloudplatform.authorization", "cloudplatform.db", "cloudplatform.keys", "cloudplatform.logging", "cloudplatform.analytics"]
+
+[project.optional-dependencies]
+platform = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "psycopg2-binary>=2.9.0",
+    "pydantic>=2.0.0",
+    "pydantic[email]>=2.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "PyJWT>=2.8.0",
+    "python-multipart>=0.0.6",
+    "email-validator>=2.1.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=4.1.0",
+    "responses>=0.24.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "httpx>=0.25.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Fast unit tests (no external dependencies)",
+    "integration: Tests requiring DB connection",
+    "e2e: End-to-end tests (requires deployed environment)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["cloudplatform"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/main.py",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
