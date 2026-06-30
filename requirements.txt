@@ -23,3 +23,6 @@ httpx>=0.25.0
 
 # Scheduler
 apscheduler>=3.10.4
+
+# HTTP client (used by test_mode for simulator calls)
+requests>=2.31.0
