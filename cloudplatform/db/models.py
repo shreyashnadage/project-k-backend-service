@@ -405,3 +405,29 @@ class TestModeState(Base):
     active_simulation_id = Column(Integer, nullable=True)
     simulation_name = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class DeviceSyncSchedule(Base):
+    """
+    Per-device automatic sync schedule.
+
+    Created automatically when a device completes discover_companies.
+    The backend scheduler checks this table every minute and queues
+    sync_all_companies commands for devices whose interval has elapsed.
+    """
+    __tablename__ = "device_sync_schedules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=False, index=True)
+    device_id = Column(String(36), nullable=False)
+    interval_seconds = Column(Integer, nullable=False, default=1800)  # 30 min default
+    is_active = Column(Boolean, default=True)
+    last_scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_device_schedule", "tenant_id", "device_id", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<DeviceSyncSchedule device={self.device_id} interval={self.interval_seconds}s>"

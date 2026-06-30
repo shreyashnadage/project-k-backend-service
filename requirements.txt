@@ -20,3 +20,6 @@ PyJWT>=2.8.0
 # Utilities
 python-dotenv>=1.0.0
 httpx>=0.25.0
+
+# Scheduler
+apscheduler>=3.10.4

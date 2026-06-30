@@ -21,7 +21,8 @@ _engine_kwargs = {
     "echo": os.getenv("SQL_ECHO", "false").lower() == "true",
 }
 if not _is_sqlite:
-    _engine_kwargs.update(pool_size=10, max_overflow=20)
+    # pool_size/max_overflow sized to support ~50 concurrent long-poll connections (55s hold each)
+    _engine_kwargs.update(pool_size=30, max_overflow=60, pool_pre_ping=True)
 else:
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
